@@ -1,0 +1,70 @@
+# maotai_data_collection.py
+# Author: Yihan Zhuo
+# Target: Extract financial, valuation, and stock data for Kweichow Moutai (600519) and peers via WRDS-CSMAR
+
+import os
+import pandas as pd
+import wrds
+
+# ------------------------- User Inputs -------------------------
+stkcd = '600519'  # Kweichow Moutai
+competitorlist = ['000858', '000568']  # Wuliangye and Luzhou Laojiao
+username = 'yourWRDSusername'  # Replace with your WRDS username
+years = list(range(2017, 2023))
+stocklist = tuple([stkcd] + competitorlist)
+
+# ------------------------- Connect to WRDS -------------------------
+db = wrds.Connection(wrds_username=username)
+
+# ------------------------- Define Variable Mappings -------------------------
+fbs = {
+    'a001000000': 'Total Assets',
+    'a002000000': 'Total Liabilities',
+    'a003000000': 'Total Equity',
+    'a002201000': 'Long-Term Debt',
+    'a002101000': 'Short-Term Borrowings',
+    'a001111000': 'Accounts Receivable',
+    'a001123000': 'Inventory'
+}
+
+fis = {
+    'b001101000': 'Revenue',
+    'b001201000': 'COGS',
+    'b001209000': 'Selling Expenses',
+    'b001210000': 'Admin Expenses',
+    'b001216000': 'R&D Expenses',
+    'b002000000': 'Net Profit'
+}
+
+fcs = {
+    'd000100000': 'Net Cash Flow from Operations'
+}
+
+# Combine into one master list for loop
+filelist = {
+    'bs': (', '.join(fbs.keys()), fbs, 'bs_maotai'),
+    'is': (', '.join(fis.keys()), fis, 'is_maotai'),
+    'cf': (', '.join(fcs.keys()), fcs, 'cf_maotai')
+}
+
+# ------------------------- Download and Reshape Data -------------------------
+for key, (vars_str, var_map, fname) in filelist.items():
+    query = f"""
+        SELECT stkcd, accper, {vars_str}
+        FROM csmar.csmar_master
+        WHERE stkcd in {stocklist}
+        AND typrep = 'A'
+    """
+    df = db.raw_sql(query, date_cols=['accper'])
+    df = df[df.accper.dt.month == 12]
+    df['year'] = df.accper.dt.year
+    df = df[df['year'].isin(years)]
+    df.drop(columns=['accper'], inplace=True)
+    df.sort_values(by=['stkcd', 'year'], inplace=True)
+    df.rename(columns=var_map, inplace=True)
+    df_pivot = df.pivot(index='stkcd', columns='year')
+    df_pivot.to_excel(f"{fname}.xlsx")
+    print(f"Exported {fname}.xlsx")
+
+# ------------------------- Disconnect -------------------------
+db.close()
